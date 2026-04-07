@@ -57,3 +57,5 @@ flutter_app/.dart_tool/
 .DS_Store
 Thumbs.db
 EOF
+
+test data/
