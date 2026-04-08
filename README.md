@@ -46,8 +46,7 @@ signal-sprint-sota/
 │   ├── src/
 │   │   ├── train_stage1_yolo.py  # Ultralytics fine-tuning script
 │   │   ├── train_stage2_vit.py   # PyTorch training script
-│   │   ├── generate_vit_crops.py # Automated extraction of Stage 2 50%-halo crops
-│   │   ├── smart_sort_crops.py   # Human-in-the-loop OpenCV sorting script for Phase 6
+│   │   ├── generate_and_sort_vit_crops.py # Automated extraction of Stage 2 50%-halo crops
 │   │   ├── stacker.py            # MSW-Net logic head script
 │   │   └── inference.py          # The final logic combining all stages (MAX Rule)
 │   │
