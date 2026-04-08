@@ -58,4 +58,5 @@ flutter_app/.dart_tool/
 Thumbs.db
 EOF
 
-test data/ad
+ml_backend/test_data/
+runs/
