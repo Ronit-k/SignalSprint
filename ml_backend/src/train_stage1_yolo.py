@@ -3,7 +3,7 @@ from ultralytics import YOLO
 def train_bin_detector():
     # 1. Load a pre-trained YOLO11 model
     # 'yolo11n.pt' is Nano (fastest). Use 'yolo11s.pt' (Small) for a bit more accuracy.
-    model = YOLO("yolo11n.pt") 
+    model = YOLO("yolo11m.pt") 
 
     print("🚀 Starting YOLO11 Training...")
 
@@ -11,7 +11,7 @@ def train_bin_detector():
     results = model.train(
         data="ml_backend/data/yolo_dataset/yolo_dataset.yaml",    # Path to your YAML file
         epochs=100,               # 100 is a good baseline to see how it converges
-        imgsz=640,                # Standard YOLO image size
+        imgsz=512,                # Standard YOLO image size
         batch=16,                 # Adjust based on your GPU RAM (8, 16, 32)
         device="0",               # Use "0" for GPU, or "cpu" if you don't have a GPU
         project="IITK_Bin_Vision",# Main folder for saved models
