@@ -1,4 +1,4 @@
-# Signal Sprint: SOTA "DMC-Intelligence" Pipeline
+# Signal Sprint
 
 This repository contains the State-of-the-Art (SOTA) hierarchical computer vision pipeline and Flutter interface for the **Signal Sprint** competition. 
 
