@@ -9,7 +9,7 @@ def train_bin_detector():
 
     # 2. Train the model
     results = model.train(
-        data="ml_backend/data/yolo_dataset/yolo_dataset.yaml",    # Path to your YAML file
+        data="ml_backend/data/yolo_dataset/data.yaml",    # Path to your YAML file
         epochs=100,               # 100 is a good baseline to see how it converges
         imgsz=512,                # Standard YOLO image size
         batch=16,                 # Adjust based on your GPU RAM (8, 16, 32)
