@@ -34,6 +34,8 @@ signal-sprint-sota/
 │
 ├── ml_backend/               # Python/Conda domain for model training and inference
 │   ├── data/
+|   |   |__ heicToJpg.py      # Converts HEIC images to JPG
+|   |   |__ selectAndResize.py# Selects and resizes images
 │   │   ├── raw_images/       # Initial 2,000 unaugmented 1:1 captures (ignored in Git)
 │   │   ├── temp_clean_export/# Temporary unaugmented Roboflow export (ignored in Git)
 │   │   ├── yolo_dataset/     # Augmented Roboflow export for Stage 1 (ignored in Git)
@@ -47,10 +49,9 @@ signal-sprint-sota/
 │   │   ├── train_stage1_yolo.py  # Ultralytics fine-tuning script
 │   │   ├── train_stage2_vit.py   # PyTorch training script
 │   │   ├── generate_and_sort_vit_crops.py # Automated extraction of Stage 2 50%-halo crops
-│   │   ├── stacker.py            # MSW-Net logic head script
 │   │   └── inference.py          # The final logic combining all stages (MAX Rule)
 │   │
-│   ├── models/               # Saved weights (.pt)
+│   ├── models/               # Saved weights (.pt/pth)
 │   ├── export/
 │   │   └── signal_sprint_pipeline.pkl  # Final 80% submission file
 │   │

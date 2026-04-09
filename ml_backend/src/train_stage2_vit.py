@@ -17,7 +17,7 @@ DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/vit_
 RUNS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../runs/vit"))
 
 IMG_SIZE = 224
-BATCH_SIZE = 16    # Reduce to 8 if you hit a CUDA Out of Memory error
+BATCH_SIZE = 4    # Reduce to 8 if you hit a CUDA Out of Memory error
 EPOCHS = 15
 LEARNING_RATE = 2e-5
 

@@ -1,3 +1,10 @@
 ml_backend/test_data/
 runs/
 ml_backend/data 
+*__pycache__
+*.pkl
+*.pth
+*.pt
+*.zip
+
+
