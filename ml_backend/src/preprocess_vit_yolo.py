@@ -34,7 +34,7 @@ if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir) # Go up to ml_backend
     
-    model_path = os.path.join(project_root, "models", "yolov8s.pt")
+    model_path = os.path.join(project_root, "models", "yolov8m.pt")
     
     old_action_dir = os.path.join(project_root, "data", "vit_dataset", "old_action_required")
     old_no_action_dir = os.path.join(project_root, "data", "vit_dataset", "old_no_action")
