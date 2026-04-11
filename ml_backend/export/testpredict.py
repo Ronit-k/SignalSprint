@@ -4,7 +4,7 @@ import glob
 import csv
 
 # Import the evaluator's functions from your predict.py
-from _3stage_predict import load_model, predict
+from _2stage_predict import load_model, predict
 
 def main():
     print("🚀 Initializing Pipeline Evaluation Test...")

@@ -1,10 +1,11 @@
 import pickle
 import os
 
-print("Packaging model.pkl with models/best_yolo.pt and models/best_vit.pth...")
+print("Packaging model.pkl with models/", yolo_path, "and models/", vit_path)
 
-yolo_path = "models/best_yolo.pt"
-vit_path = "models/best_vit.pth"
+yolo_path = "models/best_yolo_v2.pt"
+vit_path = "models/best_vit_v5.pth"
+print ("using", yolo_path, "and", vit_path)
 
 if not os.path.exists(yolo_path):
     print(f"ERROR: {yolo_path} not found!")
