@@ -20,7 +20,7 @@ CLASS_NAMES = {
 def load_model():
     # model.pkl is guaranteed to be in the same directory per the ZIP submission rules
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    model_pkl_path = os.path.join(current_dir, "model_v2v3.pkl")
+    model_pkl_path = os.path.join(current_dir, "model.pkl")
 
     with open(model_pkl_path, "rb") as f:
         data = pickle.load(f)
