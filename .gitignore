@@ -6,5 +6,5 @@ ml_backend/data
 *.pth
 *.pt
 *.zip
-
+yolotraining/
 
