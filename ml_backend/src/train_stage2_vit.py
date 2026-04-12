@@ -34,7 +34,7 @@ DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/vit_
 RUNS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../runs/vit"))
 
 IMG_SIZE       = 224
-BATCH_SIZE     = 16        # Raised from 1; use 8 if OOM
+BATCH_SIZE     = 8      # Raised from 1; use 8 if OOM
 EPOCHS         = 30
 LEARNING_RATE  = 2e-5
 WEIGHT_DECAY   = 0.01

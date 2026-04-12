@@ -5,6 +5,7 @@ import csv
 
 # Import the evaluator's functions from your predict.py
 from _2stage_predict import load_model, predict
+# from predict import load_model, predict
 
 def main():
     print("🚀 Initializing Pipeline Evaluation Test...")
@@ -57,7 +58,7 @@ def main():
     print(f"\n2. Testing predict() on up to 5 images from {test_images_dir}...")
     
     # Process up to 5 images
-    for img_path in image_paths[:50]:
+    for img_path in image_paths[0:50]:
         print("-" * 50)
         img_basename = os.path.basename(img_path)
         print(f"🖼️ Testing Image: {img_basename}")
