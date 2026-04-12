@@ -5,6 +5,7 @@ import csv
 
 # Import the evaluator's functions from your predict.py
 from _2stage_predict import load_model, predict
+# from _2stage_predict_modified import load_model, predict
 # from predict import load_model, predict
 
 def main():

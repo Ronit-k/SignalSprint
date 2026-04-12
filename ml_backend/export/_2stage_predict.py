@@ -28,7 +28,7 @@ from ultralytics import YOLO
 # HYPERPARAMETERS (tune these to dial in accuracy)
 # ──────────────────────────────────────────────
 YOLO_CONF         = 0.25   # Raised from 0.1 to filter noisy detections
-ACTION_THRESHOLD   = 0.35   # Softmax P(action) must exceed this to flag
+ACTION_THRESHOLD   = 0.3   # Softmax P(action) must exceed this to flag
 TTA_ENABLED        = True   # Test-Time Augmentation for robustness
 
 CLASS_NAMES = {
