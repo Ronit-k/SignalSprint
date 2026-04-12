@@ -1,14 +1,19 @@
 """
-2-Stage SOTA Predict Pipeline
-==============================
-Stage 1 — DMC-Gate Detector: Custom YOLOv8 (best_yolo_v2.pt)
-           Detects bins, filters traps, extracts 150% halo crops
+2-Stage SOTA Predict Pipeline + CLIP Safety Net
+=================================================
+Stage 1 — DMC-Gate: Custom YOLO detects bins, filters traps, extracts halo crops
 
-Stage 2 — Contextual Observer: Fine-tuned Swin Transformer
-           Classifies each crop → action_required / no_action
-           with softmax confidence thresholding + Test-Time Augmentation (TTA)
+  ┌─ Bins found ──→ Stage 2 (ViT + TTA) ──→ decision
+  └─ No bins ────→ CLIP Safety Net (zero-shot bin detection)
+                     ├─ "dustbin present" → Full image → ViT → decision
+                     └─ "no dustbin"      → return 0
 
-Aggregation — Confidence-gated MAX rule with TTA-averaged probabilities
+Stage 2 — Contextual Observer: Swin Transformer + TTA + softmax thresholding
+
+CLIP Safety Net catches YOLO false negatives by computing cosine similarity
+between the image and pre-computed text embeddings for dustbin vs non-dustbin
+prompts. Only the CLIP vision encoder runs at inference (text embeddings
+are pre-baked into model.pkl).
 """
 
 import os
@@ -21,15 +26,16 @@ import torch.nn.functional as F
 import numpy as np
 from PIL import Image
 from torchvision import transforms
-from transformers import SwinConfig, SwinForImageClassification
+from transformers import SwinConfig, SwinForImageClassification, CLIPVisionModel, CLIPConfig
 from ultralytics import YOLO
 
 # ──────────────────────────────────────────────
-# HYPERPARAMETERS (tune these to dial in accuracy)
+# HYPERPARAMETERS
 # ──────────────────────────────────────────────
-YOLO_CONF         = 0.25   # Raised from 0.1 to filter noisy detections
-ACTION_THRESHOLD   = 0.3   # Softmax P(action) must exceed this to flag
-TTA_ENABLED        = True   # Test-Time Augmentation for robustness
+YOLO_CONF           = 0.25   # Stage 1 YOLO confidence
+ACTION_THRESHOLD    = 0.3    # ViT softmax P(action) must exceed this
+TTA_ENABLED         = True   # Test-Time Augmentation
+CLIP_BIN_THRESHOLD  = 0.1    # CLIP: min (pos - neg) similarity gap to confirm bin presence
 
 CLASS_NAMES = {
     0: "bin_caged",
@@ -38,102 +44,164 @@ CLASS_NAMES = {
     3: "trap_object"
 }
 
+# CLIP image preprocessing (matches openai/clip-vit-base-patch32 training)
+CLIP_TRANSFORM = transforms.Compose([
+    transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
+                         std=[0.26862954, 0.26130258, 0.27577711])
+])
+
 
 def load_model():
-    """Load all models from model.pkl (expected in same directory)."""
+    """Load YOLO + ViT + CLIP from model.pkl."""
     current_dir = os.path.dirname(os.path.abspath(__file__))
     model_pkl_path = os.path.join(current_dir, "model.pkl")
 
     with open(model_pkl_path, "rb") as f:
         data = pickle.load(f)
 
-    # Stage 1: YOLO
+    device = torch.device("cpu")
+
+    # ── Stage 1: YOLO ─────────────────────────────
     yolo_temp_path = os.path.join(tempfile.gettempdir(), 'temp_yolo.pt')
     with open(yolo_temp_path, 'wb') as f:
         f.write(data['yolo'])
     yolo_model = YOLO(yolo_temp_path)
 
-    # Stage 2: Swin Transformer (air-gap safe via bundled config)
-    device = torch.device("cpu")
+    # ── Stage 2: Swin Transformer ─────────────────
     vit_config = SwinConfig.from_dict(data['vit_config'])
     vit_model = SwinForImageClassification(vit_config)
-
     vit_bytes_io = io.BytesIO(data['vit'])
     vit_model.load_state_dict(torch.load(vit_bytes_io, map_location=device))
     vit_model.to(device)
     vit_model.eval()
 
-    # Pre-build transforms once (not per-image)
-    base_transform = transforms.Compose([
+    vit_transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                              std=[0.229, 0.224, 0.225])
     ])
 
+    # ── CLIP Safety Net ───────────────────────────
+    clip_config = CLIPConfig.from_dict(data['clip_config'])
+    clip_vision = CLIPVisionModel(clip_config.vision_config)
+    clip_vision_bytes = io.BytesIO(data['clip_vision'])
+    clip_vision.vision_model.load_state_dict(torch.load(clip_vision_bytes, map_location=device))
+    clip_vision.to(device)
+    clip_vision.eval()
+
+    # Load visual projection layer (maps vision features → shared CLIP space)
+    clip_proj_bytes = io.BytesIO(data['clip_projection'])
+    clip_projection = torch.nn.Linear(
+        clip_config.vision_config.hidden_size,
+        clip_config.projection_dim,
+        bias=False
+    )
+    clip_projection.load_state_dict(torch.load(clip_proj_bytes, map_location=device))
+    clip_projection.to(device)
+    clip_projection.eval()
+
+    # Pre-computed text embeddings [n_prompts, 512]
+    clip_text_features = data['clip_text_features'].to(device)
+    clip_n_positive = data['clip_n_positive']
+
     return {
         "yolo": yolo_model,
         "vit": vit_model,
         "device": device,
-        "transform": base_transform,
+        "vit_transform": vit_transform,
+        "clip_vision": clip_vision,
+        "clip_projection": clip_projection,
+        "clip_text_features": clip_text_features,
+        "clip_n_positive": clip_n_positive,
     }
 
 
-def _tta_transforms(pil_img):
+# ──────────────────────────────────────────────
+# CLIP Safety Net
+# ──────────────────────────────────────────────
+def _clip_detects_bin(models, bgr_img):
     """
-    Test-Time Augmentation: generate multiple deterministic views of the crop.
-    Returns a list of PIL images to run through the ViT independently.
-    The predictions are averaged for a smoother, more robust score.
+    Zero-shot check: does this image contain a dustbin?
+    Computes cosine similarity between the image and pre-computed
+    positive (dustbin) vs negative (non-dustbin) text embeddings.
+    Returns True if positive prompts score significantly higher.
     """
-    views = [pil_img]                                            # 1. Original
-    views.append(pil_img.transpose(Image.FLIP_LEFT_RIGHT))       # 2. H-flip
-    views.append(pil_img.transpose(Image.FLIP_TOP_BOTTOM))       # 3. V-flip
+    clip_vision     = models["clip_vision"]
+    clip_projection = models["clip_projection"]
+    text_features   = models["clip_text_features"]
+    n_pos           = models["clip_n_positive"]
+    device          = models["device"]
 
-    # 4-5. Slight crops (centre 85% and 90%) — simulates scale jitter
+    # BGR → RGB → PIL → CLIP transform
+    img_rgb = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(img_rgb)
+    pixel_values = CLIP_TRANSFORM(pil_img).unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        vision_output = clip_vision(pixel_values=pixel_values)
+        # Use the [CLS] token output (pooler_output)
+        pooled = vision_output.pooler_output
+        # Project to shared embedding space
+        image_features = clip_projection(pooled)
+        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+
+        # Cosine similarity with all text embeddings
+        similarities = (image_features @ text_features.T).squeeze(0)  # [n_prompts]
+
+    # Average similarity to positive vs negative prompts
+    pos_sim = similarities[:n_pos].mean().item()
+    neg_sim = similarities[n_pos:].mean().item()
+
+    # The gap determines confidence that a dustbin is present
+    gap = pos_sim - neg_sim
+    return gap > CLIP_BIN_THRESHOLD
+
+
+# ──────────────────────────────────────────────
+# TTA
+# ──────────────────────────────────────────────
+def _tta_transforms(pil_img):
+    views = [pil_img]
+    views.append(pil_img.transpose(Image.FLIP_LEFT_RIGHT))
+    views.append(pil_img.transpose(Image.FLIP_TOP_BOTTOM))
     w, h = pil_img.size
     for ratio in (0.85, 0.90):
         dw = int(w * (1 - ratio) / 2)
         dh = int(h * (1 - ratio) / 2)
-        cropped = pil_img.crop((dw, dh, w - dw, h - dh))
-        views.append(cropped)
-
+        views.append(pil_img.crop((dw, dh, w - dw, h - dh)))
     return views
 
 
 def _get_action_probability(vit_model, pil_img, transform, device, use_tta=True):
-    """
-    Run the ViT on a single crop and return P(action_required).
-    If TTA is enabled, averages softmax probabilities across augmented views.
-    """
-    if use_tta:
-        views = _tta_transforms(pil_img)
-    else:
-        views = [pil_img]
-
+    views = _tta_transforms(pil_img) if use_tta else [pil_img]
     all_probs = []
     for view in views:
         tensor = transform(view).unsqueeze(0).to(device)
         with torch.no_grad():
             logits = vit_model(tensor).logits
             probs = F.softmax(logits, dim=1)
-            action_prob = probs[0, 0].item()  # class 0 = action_required
-        all_probs.append(action_prob)
-
-    # Average across TTA views
+            all_probs.append(probs[0, 0].item())
     return sum(all_probs) / len(all_probs)
 
 
+# ──────────────────────────────────────────────
+# Main predict
+# ──────────────────────────────────────────────
 def predict(models, image_path):
     """
-    Full 2-stage pipeline on a single image.
+    Full pipeline: YOLO → (CLIP fallback if no bins) → ViT → decision.
     Returns 1 (intimate DMC) or 0 (no action).
     """
-    yolo_model = models["yolo"]
-    vit_model  = models["vit"]
-    device     = models["device"]
-    transform  = models["transform"]
+    yolo_model    = models["yolo"]
+    vit_model     = models["vit"]
+    device        = models["device"]
+    vit_transform = models["vit_transform"]
 
-    # ── STAGE 1: DMC-Gate Selective Detection ──────────────────
+    # ── STAGE 1: YOLO ─────────────────────────────
     results = yolo_model.predict(source=image_path, conf=YOLO_CONF, verbose=False)
     result  = results[0]
 
@@ -150,17 +218,12 @@ def predict(models, image_path):
         class_id   = int(box.cls[0].item())
         class_name = CLASS_NAMES.get(class_id, "unknown")
 
-        # SINK LOGIC: skip trap objects
         if class_name == "trap_object":
             continue
 
         x1, y1, x2, y2 = map(float, box.xyxy[0].tolist())
-        bbox_w = x2 - x1
-        bbox_h = y2 - y1
-
-        # 150% Halo (kept as-is per user request)
-        pad_x = bbox_w * 1.5
-        pad_y = bbox_h * 1.5
+        bbox_w, bbox_h = x2 - x1, y2 - y1
+        pad_x, pad_y = bbox_w * 1.5, bbox_h * 1.5
 
         crop_x1 = int(max(0,     x1 - pad_x))
         crop_y1 = int(max(0,     y1 - pad_y))
@@ -171,29 +234,28 @@ def predict(models, image_path):
         if crop.size > 0:
             vit_inputs.append(crop)
 
-    # No authorized bin → DMC not concerned
+    # ── CLIP SAFETY NET: catch YOLO false negatives ──
     if not vit_inputs:
-        return 0
+        # YOLO found nothing. Ask CLIP: "is there really a dustbin here?"
+        if _clip_detects_bin(models, original_img):
+            # CLIP says YES — YOLO missed it. Send full image to ViT.
+            vit_inputs = [original_img]
+        else:
+            # CLIP agrees: no dustbin. Safe to return 0.
+            return 0
 
-    # ── STAGE 2: ViT with TTA + Confidence Thresholding ──────
+    # ── STAGE 2: ViT + TTA + Confidence Threshold ──
     action_probs = []
     for crop in vit_inputs:
-        # BGR → RGB → PIL
         img_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(img_rgb)
-
         prob = _get_action_probability(
-            vit_model, pil_img, transform, device, use_tta=TTA_ENABLED
+            vit_model, pil_img, vit_transform, device, use_tta=TTA_ENABLED
         )
         action_probs.append(prob)
 
-    # ── AGGREGATION: Confidence-gated MAX ─────────────────────
-    # Only flag if the MOST confident crop exceeds the threshold.
-    # This prevents weak/noisy crops (flower pots, manmade objects)
-    # from triggering a false positive.
+    # ── AGGREGATION ───────────────────────────────
     max_prob = max(action_probs)
-
     if max_prob > ACTION_THRESHOLD:
         return 1
-
     return 0
